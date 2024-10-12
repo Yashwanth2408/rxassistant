@@ -1,6 +1,5 @@
 import argparse
 import os
-from waitress import serve
 from typing import List, Dict
 from flask import Flask, request, jsonify
 import requests
@@ -23,6 +22,7 @@ import cv2
 import numpy as np
 from pdf2image import convert_from_path
 import re
+from gunicorn.app.base import BaseApplication
 
 # Initialize conversation state
 conversation_state = defaultdict(dict)
@@ -507,10 +507,24 @@ def main(collection_name: str = "documents_collection", persist_directory: str =
     except Exception as e:
         print(f"Collection '{collection_name}' not found. Creating a new collection.")
         collection = client.create_collection(name=collection_name, embedding_function=embedding_function)
-
+        
     # Start the Flask app
     app.run(port=10000)
 
+class StandaloneApplication(BaseApplication):
+    def __init__(self, app, options=None):
+        self.options = options or {}
+        self.application = app
+        super().__init__()
+
+    def load_config(self):
+        config = {key: value for key, value in self.options.items()
+                  if key in self.cfg.settings and value is not None}
+        for key, value in config.items():
+            self.cfg.set(key.lower(), value)
+
+    def load(self):
+        return self.application
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Load documents into a Chroma collection")
     parser.add_argument("--persist_directory", type=str, default="chroma_storage", help="Directory to store the Chroma collection")
@@ -519,6 +533,9 @@ if __name__ == "__main__":
 
     main(collection_name=args.collection_name, persist_directory=args.persist_directory)
 
-    # Add these lines for deployment
     port = int(os.environ.get("PORT", 10000))
-    serve(app, host="0.0.0.0", port=port)
+    options = {
+        'bind': f'0.0.0.0:{port}',
+        'workers': 4,
+    }
+    StandaloneApplication(app, options).run()
