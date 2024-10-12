@@ -15,4 +15,4 @@ numpy
 pdf2image
 gunicorn
 sentencepiece
-waitress==2.1.2
+gunicorn==20.1.0
