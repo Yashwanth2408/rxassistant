@@ -509,7 +509,7 @@ def main(collection_name: str = "documents_collection", persist_directory: str =
         collection = client.create_collection(name=collection_name, embedding_function=embedding_function)
 
     # Start the Flask app
-    app.run(port=3000)
+    app.run(port=10000)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Load documents into a Chroma collection")
