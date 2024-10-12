@@ -1,5 +1,6 @@
 import argparse
 import os
+from waitress import serve
 from typing import List, Dict
 from flask import Flask, request, jsonify
 import requests
@@ -492,7 +493,6 @@ def chat():
 
 def main(collection_name: str = "documents_collection", persist_directory: str = ".") -> None:
     global collection  # Declare the global variable first
-
     client = chromadb.PersistentClient(path=persist_directory)
 
     # Create embedding function using Huggingface transformers
@@ -515,7 +515,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Load documents into a Chroma collection")
     parser.add_argument("--persist_directory", type=str, default="chroma_storage", help="Directory to store the Chroma collection")
     parser.add_argument("--collection_name", type=str, default="documents_collection", help="Name of the Chroma collection")
-
     args = parser.parse_args()
 
     main(collection_name=args.collection_name, persist_directory=args.persist_directory)
+
+    # Add these lines for deployment
+    port = int(os.environ.get("PORT", 10000))
+    serve(app, host="0.0.0.0", port=port)
