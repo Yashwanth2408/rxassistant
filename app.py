@@ -13,7 +13,7 @@ from pptx import Presentation
 from PIL import Image
 import pytesseract
 import platform
-from flask_cors import CORS 
+from flask_cors import CORS
 from transformers import T5ForConditionalGeneration, T5Tokenizer
 import warnings
 import json
@@ -22,7 +22,6 @@ import cv2
 import numpy as np
 from pdf2image import convert_from_path
 import re
-from gunicorn.app.base import BaseApplication
 
 # Initialize conversation state
 conversation_state = defaultdict(dict)
@@ -54,7 +53,6 @@ if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 else:
     print("Folder already exists.")
-
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 # Load the Flan-T5 model and tokenizer from Hugging Face
@@ -70,16 +68,19 @@ embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 # Initialize Gemini model
 model = genai.GenerativeModel("gemini-1.5-flash")
 
+# Health check endpoint
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({"status": "healthy"}), 200
+
 # Helper functions to extract text from different document types
-
-
 def extract_text_from_pdf(pdf_path):
     """Extract text from a PDF file with layout preservation and OCR fallback for scanned PDFs."""
     text = ""
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
             page_text = page.extract_text(layout=True)  # Preserve layout
-            if page_text:  
+            if page_text:
                 text += page_text + "\n"
             else:  # If text extraction fails, use OCR on the image version of the page
                 images = convert_from_path(pdf_path)
@@ -108,8 +109,6 @@ def extract_text_from_ppt(ppt_path):
                         text += sub_shape.text + "\n"
     return clean_text(text)
 
-
-
 def preprocess_image(image):
     """Preprocess the image for better OCR accuracy: grayscale, contrast, and resize."""
     gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
@@ -137,6 +136,7 @@ def extract_text_from_file(file_path):
         return extract_text_from_image(file_path)
     else:
         return None
+
 def clean_text(text):
     """Remove unnecessary empty lines and extra spaces from extracted text."""
     # Remove leading/trailing spaces and collapse multiple spaces into one
@@ -152,7 +152,6 @@ def fetch_and_call_api(query):
         response_data = response.json()
     except Exception as e:
         return "Need API Key to call, to perform the action."
-
     if response and response_data.get("status") == "success":
         return response_data["message"]
 
@@ -163,7 +162,6 @@ def execute_action(action_name: str, query: str, session_id: str) -> str:
     key_points_json = extract_key_action_with_gemini(query)
     extracted_data = json.loads(key_points_json)
     print("Extracted data:", extracted_data)
-
     # Filter out null values
     order_id = extracted_data.get("order_id")
     payment_id = extracted_data.get("payment_id")
@@ -171,7 +169,7 @@ def execute_action(action_name: str, query: str, session_id: str) -> str:
     print("Order ID:", order_id, "Payment ID:", payment_id, "Invoice ID:", invoice_id)
     # Check for missing identifiers and prompt the user
     missing_info = []
-    
+
     if action_name == "create_order" and order_id is None:
         missing_info.append("Order ID")
     if action_name == "cancel_order" and order_id is None:
@@ -183,7 +181,6 @@ def execute_action(action_name: str, query: str, session_id: str) -> str:
     print(missing_info)
     if missing_info:
         return f"Please provide the following information: {', '.join(missing_info)}."
-
     # Proceed with the action if all required identifiers are present
     confirmation_message = ""
     if action_name == "create_order":
@@ -202,9 +199,8 @@ def execute_action(action_name: str, query: str, session_id: str) -> str:
         return f"Here is your invoice with ID {invoice_id}."
     else:
         return "No action taken."
-
-    return confirmation_message
-
+    return
+    
 def confirm_action(action_name: str, identifier: str) -> str:
     """
     Confirms the specified action and executes it if confirmed.
@@ -492,50 +488,25 @@ def chat():
 
 
 def main(collection_name: str = "documents_collection", persist_directory: str = ".") -> None:
-    global collection  # Declare the global variable first
-    client = chromadb.PersistentClient(path=persist_directory)
-
-    # Create embedding function using Huggingface transformers
+    global collection
+    client = chromadb.PersistentClient(path=os.getenv("CHROMA_DB_PATH", "chroma_storage"))
     embedding_function = embedding_functions.HuggingFaceEmbeddingFunction(
         model_name="sentence-transformers/all-MiniLM-L6-v2",
-        api_key="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"
+        api_key=os.getenv("HUGGINGFACE_API_KEY")
     )
-
     try:
         collection = client.get_collection(name=collection_name, embedding_function=embedding_function)
         print(f"Loaded existing collection: {collection_name}")
     except Exception as e:
         print(f"Collection '{collection_name}' not found. Creating a new collection.")
         collection = client.create_collection(name=collection_name, embedding_function=embedding_function)
-        
-    # Start the Flask app
-    app.run(port=10000)
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
 
-class StandaloneApplication(BaseApplication):
-    def __init__(self, app, options=None):
-        self.options = options or {}
-        self.application = app
-        super().__init__()
-
-    def load_config(self):
-        config = {key: value for key, value in self.options.items()
-                  if key in self.cfg.settings and value is not None}
-        for key, value in config.items():
-            self.cfg.set(key.lower(), value)
-
-    def load(self):
-        return self.application
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Load documents into a Chroma collection")
-    parser.add_argument("--persist_directory", type=str, default="chroma_storage", help="Directory to store the Chroma collection")
+    parser.add_argument("--persist_directory", type=str, default=os.getenv("CHROMA_DB_PATH", "chroma_storage"), help="Directory to store the Chroma collection")
     parser.add_argument("--collection_name", type=str, default="documents_collection", help="Name of the Chroma collection")
     args = parser.parse_args()
-
     main(collection_name=args.collection_name, persist_directory=args.persist_directory)
-
-    port = int(os.environ.get("PORT", 10000))
-    options = {
-        'bind': f'0.0.0.0:{port}',
-        'workers': 4,
-    }
-    StandaloneApplication(app, options).run()
+    
+  
